@@ -1,10 +1,13 @@
 ﻿using System;
+using System.Threading;
+using System.Threading.Tasks;
 using Cookie.API.Core;
 using Cookie.API.Game.Fight;
 using Cookie.API.Game.Map;
 using Cookie.API.Game.World.Pathfinding;
 using Cookie.API.Game.World.Pathfinding.Positions;
 using Cookie.API.Messages;
+using Cookie.API.Protocol;
 using Cookie.API.Protocol.Enums;
 using Cookie.API.Protocol.Network.Messages;
 using Cookie.API.Utils;
@@ -17,7 +20,6 @@ namespace Cookie.Game.Fight
     {
         public Fight(IAccount account) : base(account)
         {
-            Attach();
         }
 
         public void EndTurn()
@@ -111,30 +113,6 @@ namespace Cookie.Game.Fight
             pathfinder.SetFight(Fighters, Fighter.MovementPoints);
             var path = pathfinder.FindPath(Fighter.CellId, cellId);
             return path == null ? null : new CellMovement(Account, path);
-        }
-        public event Action<GameActionFightSpellCastMessage> SpellCasted;
-        public event Action<GameActionFightCloseCombatMessage> CloseCombatCasted;
-
-        private void Attach()
-        {
-            //Logger.Default.Log("Register Fight Packet");
-            Account.Network.RegisterPacket<GameActionFightSpellCastMessage>(HandleGameActionFightSpellCastMessage, MessagePriority.VeryHigh);
-            Account.Network.RegisterPacket<GameFightJoinMessage>(HandleGameFightJoinMessage, MessagePriority.High);
-            Account.Network.RegisterPacket<GameActionFightCloseCombatMessage>(HandleGameActionFightCloseCombatMessage, MessagePriority.Normal);
-        }
-
-        private void HandleGameActionFightSpellCastMessage(IAccount account, GameActionFightSpellCastMessage message)
-        {
-            SpellCasted?.Invoke(message);
-        }
-        private void HandleGameActionFightCloseCombatMessage(IAccount account, GameActionFightCloseCombatMessage message)
-        {
-            CloseCombatCasted?.Invoke(message);
-        }
-
-        private void HandleGameFightJoinMessage(IAccount account, GameFightJoinMessage message)
-        {
-            Account.Network.SendToServer(new GameFightOptionToggleMessage(2));
         }
     }
 }
