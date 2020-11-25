@@ -69,8 +69,7 @@ namespace Cookie
                     IconsManager.Instance.Initialize(Settings.Default.DofusPath + @"\content\gfx\items");
                     ObjectDataManager.Instance.AddReaders(Settings.Default.DofusPath + @"\data\common");
 
-                    FastD2IReader.Instance.Init(Settings.Default.DofusPath + @"\data\i18n" +
-                                                "\\i18n_fr.d2i");
+                    FastD2IReader.Instance.Init(Settings.Default.DofusPath + @"\data\i18n" + "\\i18n_fr.d2i");
 
                     ImageManager.Init(Settings.Default.DofusPath);
                 }).ContinueWith(p =>
@@ -419,7 +418,10 @@ namespace Cookie
         }
         public void UpdateMapLabel(string text)
         {
-            this.lPos.Text = text;
+            if (lPos.InvokeRequired)
+            {
+                lPos.Invoke(new MethodInvoker(delegate { lPos.Text = text; }));
+            }
         }
 
         private void HideFight_CheckedChanged(object sender, EventArgs e)

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using System.Runtime.Remoting.Channels;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using Cookie.API.Core;
 using Cookie.API.Datacenter;
@@ -152,6 +153,7 @@ namespace Cookie.Game.Map
                 {
                     if (e.EndCell == monsterGroup.CellId)
                     {
+                        Task.Delay(250).Wait();
                         _account.Network.SendToServer(new GameRolePlayAttackMonsterRequestMessage(monsterGroup.Id));
                         Logger.Default.Log($"Launching Attack");
                     }
@@ -730,7 +732,6 @@ namespace Cookie.Game.Map
         private void HandleGameMapNoMovementMessage(IAccount account, GameMapNoMovementMessage message)
         {
             Logger.Default.Log("Erreur lors du déplacement sur cellX : " + message.CellX + "cellY : " + message.CellY);
-            account.Character.Status = CharacterStatus.None;
             OnMovementFailed();
         }
         private void OnMapMovement(GameMapMovementMessage message)

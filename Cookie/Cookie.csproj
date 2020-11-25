@@ -111,6 +111,7 @@
     <Compile Include="Game\Fight\Spell\SpellCast.cs" />
     <Compile Include="Game\Friend\Friend.cs" />
     <Compile Include="Game\Guild\Guild.cs" />
+    <Compile Include="Game\Inventory\Idols.cs" />
     <Compile Include="Game\Inventory\Inventory.cs" />
     <Compile Include="Game\Jobs\GatherManager.cs" />
     <Compile Include="Game\Map\CellMovement.cs" />
