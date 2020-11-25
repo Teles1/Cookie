@@ -424,17 +424,47 @@ namespace Cookie
 
         private void HideFight_CheckedChanged(object sender, EventArgs e)
         {
-            ((Core.Character)_account.Character).Ia.HideFight();
+            UpdateCheckBox(CheckBox.Observer);
         }
 
         private void LockFight_CheckedChanged(object sender, EventArgs e)
         {
-            ((Core.Character)_account.Character).Ia.LockFight();
+            UpdateCheckBox(CheckBox.Lock);
         }
 
         private void PartyOnly_CheckedChanged(object sender, EventArgs e)
         {
-            ((Core.Character)_account.Character).Ia.LockParty();
+            UpdateCheckBox(CheckBox.Party);
+        }
+        private void UpdateCheckBox(CheckBox type)
+        {
+            if (((Core.Character)_account.Character).Ia == null)
+            {
+                MessageBox.Show("AI isn't initialized.");
+                return;
+            }
+            switch (type)
+            {
+                case CheckBox.Lock:
+                    ((Core.Character)_account.Character).Ia.LockFight(true);
+                    LockFight.Checked = !LockFight.Enabled;
+                    break;
+                case CheckBox.Observer:
+                    ((Core.Character)_account.Character).Ia.HideFight(true);
+                    LockFight.Checked = !LockFight.Checked;
+                    break;
+
+                case CheckBox.Party:
+                    ((Core.Character)_account.Character).Ia.LockParty(true);
+                    PartyOnly.Checked = !PartyOnly.Checked;
+                    break;
+            }
+        } 
+        enum CheckBox : int
+        {
+            Party,
+            Lock,
+            Observer
         }
     }
 }

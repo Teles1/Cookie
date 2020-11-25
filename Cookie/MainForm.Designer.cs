@@ -398,7 +398,7 @@
             this.HideFight.TabIndex = 2;
             this.HideFight.Text = "Hide Fight";
             this.HideFight.UseVisualStyleBackColor = true;
-            this.HideFight.CheckedChanged += new System.EventHandler(this.HideFight_CheckedChanged);
+            this.HideFight.Click += new System.EventHandler(this.HideFight_CheckedChanged);
             // 
             // LockFight
             // 
@@ -410,7 +410,7 @@
             this.LockFight.TabIndex = 1;
             this.LockFight.Text = "Lock Fight";
             this.LockFight.UseVisualStyleBackColor = true;
-            this.LockFight.CheckedChanged += new System.EventHandler(this.LockFight_CheckedChanged);
+            this.LockFight.Click += new System.EventHandler(this.LockFight_CheckedChanged);
             // 
             // TabIAControl
             // 
@@ -475,6 +475,18 @@
             this.CloseButton.TabIndex = 7;
             this.CloseButton.UseVisualStyleBackColor = true;
             this.CloseButton.Click += new System.EventHandler(this.CloseButton_Click);
+            // 
+            // PartyOnly
+            // 
+            this.PartyOnly.AutoCheck = false;
+            this.PartyOnly.AutoSize = true;
+            this.PartyOnly.Location = new System.Drawing.Point(647, 546);
+            this.PartyOnly.Name = "PartyOnly";
+            this.PartyOnly.Size = new System.Drawing.Size(81, 19);
+            this.PartyOnly.TabIndex = 4;
+            this.PartyOnly.Text = "Party Only";
+            this.PartyOnly.UseVisualStyleBackColor = true;
+            this.PartyOnly.Click += new System.EventHandler(this.PartyOnly_CheckedChanged);
             // 
             // MainForm
             // 

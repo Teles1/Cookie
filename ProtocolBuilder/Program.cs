@@ -1,5 +1,6 @@
 ﻿using Cookie.API.Datacenter;
 using Cookie.API.Game.Map;
+using Cookie.API.Game.World.Pathfinding.Positions;
 using Cookie.API.Gamedata.D2o;
 using Cookie.API.Protocol.Network.Messages;
 using Cookie.API.Utils.IO;
@@ -70,7 +71,39 @@ namespace ProtocolBuilder
         }
         static void Main(string[] args)
         {
-            
+            var characterPoint = new MapPoint(468);
+            var targetPoint = new MapPoint(555);
+            GetListPointAtGoodDistance(characterPoint, targetPoint, 1);
+            Console.ReadKey();
+        }
+
+        private static List<MapPoint> GetListPointAtGoodDistance(MapPoint characterPoint, MapPoint elementPoint,int weaponRange)
+        {
+            var list = new List<MapPoint>();
+            var num = -1;
+            var direction = 1;
+            while (true)
+            {
+                var i = 0;
+                while (i < weaponRange)
+                {
+                    i += 1;
+                    var nearestCellInDirection = elementPoint.GetNearestCellInDirection(direction, i);
+                    if (!nearestCellInDirection.IsInMap()) continue;
+                    var num4 = characterPoint.DistanceToCell(nearestCellInDirection);
+                    if (num == -1 || num >= num4)
+                    {
+                        if (num4 < num)
+                            list.Clear();
+                        num = num4;
+                        list.Add(nearestCellInDirection);
+                    }
+                    break;
+                }
+                direction += +2;
+                if (direction > 7)
+                    return list;
+            }
         }
 
         #region Network Parser

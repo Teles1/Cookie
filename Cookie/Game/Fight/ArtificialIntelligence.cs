@@ -20,16 +20,26 @@ using Cookie.Game.Fight.Spell;
 
 namespace Cookie.Game.Fight
 {
+    /// <summary>
+    ///     MapComplementaryInformationsDataMessage Contains the starting fight cells for the map.
+    /// </summary>
     public class ArtificialIntelligence : IArtificialIntelligence
     {
+        private bool IsHidden { get; set; }
+        private bool IsLocked { get; set; }
+        private bool IsPartyOnly { get; set; }
+
         private IAccount _account;
-        private readonly Random random = new Random();
-        private ISpellCast _spellEvent;
         private List<IASpell> _spells;
-        private List<IASpell> _iASpells;
-        private IASpell _currentSpell;
-        private int _currentSpellRelaunch;
+        private AutoResetEvent MovementAutoReset = new AutoResetEvent(false);
+        private readonly int TimeOut = 5000;
+        private readonly Random random = new Random();
+        private int Delay => random.Next(500, 1000);
+        private CancellationTokenSource CancellationTokenSource;
+        private CancellationToken Token => CancellationTokenSource.Token;
+        private AutoResetEvent FighterDiedAutoReset => _account.Character.Fight.FighterDiedAutoReset;
         private IFighter Fighter => _account.Character.Fight.Fighter;
+        private object CheckLock { get; }
         public void Load(IAccount account, string path)
         {
             _account = account;
@@ -74,6 +84,9 @@ namespace Cookie.Game.Fight
             _account.Character.Fight.FightStarted += StartFight;
             _account.Character.Fight.TurnStarted += ExecuteTurn;
             _account.Character.Fight.FightEnded += FightEnd;
+            IsHidden = false;
+            IsLocked = false;
+            IsPartyOnly = false;
         }
         public void RemoveEvents()
         {
@@ -83,6 +96,7 @@ namespace Cookie.Game.Fight
         }
         public ArtificialIntelligence()
         {
+            CheckLock = new object();
         }
         private void FightEnd(GameFightEndMessage msg)
         {
@@ -105,7 +119,7 @@ namespace Cookie.Game.Fight
                 HideFight(false);
             if (IsLocked)
                 LockFight(false);
-            if (PartyOnly)
+            if (IsPartyOnly)
                 LockParty(false);
             ((Cookie.Core.Frames.BasicFrame)_account.BasicFrame).SpellError += Frame_SpellError;
             
@@ -129,68 +143,105 @@ namespace Cookie.Game.Fight
             Logger.Default.Log("ExecuteSpell");
             if(Fighter.ActionPoints <= 0)
             {
-                Endturn();
-            }
-            var monster = _account.Character.Fight.NearestMonster();
-            var fighter = (IFighter)monster;
-            if(_currentSpell.Target == SpellTarget.Self)
-                fighter = Fighter;
-            if(_account.Character.Fight.CanLaunchSpell(_currentSpell.SpellId) != SpellInabilityReason.None)  //cant use the spell at all.
-            {
-                if(GetNextSkill())
-                    ExecuteSpell();
-                return;
-            }
-            if(_currentSpell.MoveFirst && !_account.Character.Fight.IsHandToHand()) //if spell requires move first and we are not beside a mob.
-            {
-                Logger.Default.Log($"MoveFirst && !HandToHand");
-                //_currentSpell.MoveFirst = false; // just so it doesn't perform this again.
-                MovementEnum movResults = MoveToHit(fighter, true);
-                //No need to Call Execute because we are waiting for the movement.
-                if (movResults != MovementEnum.Success)
+                Logger.Default.Log($"Vie du bot: {_account.Character.LifePercentage}, AP[{Fighter.ActionPoints}]");
+                if (_spells == null) return;
+                if(Fighter.ActionPoints != 0)
+                    foreach (var spell in _spells)
+                        for (int i = 0; i < spell.Relaunchs; i++)
+                        {
+                            if (Fighter == null) return;
+                            IFighter target = _account.Character.Fight.NearestMonster();
+                            if (_account.Character.Fight.CanLaunchSpell(spell.SpellId) != SpellInabilityReason.None) continue;
+                            if (spell.MoveFirst && Fighter.MovementPoints > 0 && !_account.Character.Fight.IsHandToHand()) // only move if character is not beside a mob.
+                            {
+                                MoveClose(target);
+                                if(MovementAutoReset.WaitOne(TimeOut)) // Waiting some time for the movementAutoReset to be set. It doesn't matter the outcome we want to call ExecuteSpell
+                                    Logger.Default.Log($"Movefirst required and finished.", LogMessageType.FightLog);
+                            }
+                            if (spell.Target == SpellTarget.Self)
+                                target = Fighter;
+                            ExecuteSpell(spell, target);
+                        }
+                // Check weather the bot should move closer to our next target or just pass it's turn.
+                if (Fighter == null) return;
+                if (Fighter.MovementPoints > 0 && 
+                    _account.Character.Fight.Fighter.Stats.DodgePALostProbability == 0 && 
+                    !_account.Character.Fight.IsHandToHand())
                 {
-                    if (GetNextSkill())
-                        ExecuteSpell();
+                    IFighter target = _account.Character.Fight.NearestMonster();
+                    EventHandler<CellMovementEventArgs> lambda = null;
+                    lambda = async (s, e) => {
+                        await Task.Delay(Delay);
+                        Endturn();
+                    };
+                    MoveClose(target);
+                    MovementAutoReset.WaitOne(TimeOut);
+                    Endturn();
+                    return;
                 }
-                if (_currentSpell.HandToHand)
-                { // if spell requires handtohand and it could not Move [!= Success] then we look for the next one else continue with the script.
-                    if (GetNextSkill())
-                        ExecuteSpell();
+                Task.Delay(Delay).Wait();
+                Endturn();
+                return;
+            },Token);
+        }
+        private void ExecuteSpell(IASpell spell, IFighter target)
+        {
+            Logger.Default.Log($"ExecuteSpell {spell.Name}");
+            try
+            {
+                if (spell.HandToHand && !_account.Character.Fight.IsHandToHand())
+                {
+                    if (Fighter.MovementPoints > 0 && MoveToHit(target, spell, true) == MovementEnum.Success)
+                    {
+                        if (MovementAutoReset.WaitOne(TimeOut)) // Waiting some time for MovementAnswer finished. If true then call recursively
+                        {
+                            Logger.Default.Log($"Movement succeeded and Bot is HandToHand to cast {spell.Name}.", LogMessageType.FightLog);
+                            ExecuteSpell(spell, target);//in theory it should be HandToHand
+                        }// if movement fails let it return let it returns;
+                        else
+                            Logger.Default.Log($"Movement Failed. Bot couldn't not get HandToHand to cast {spell.Name}.", LogMessageType.FightLog);
+                    }
+                    else
+                        Logger.Default.Log($"Movement cannot be performed to cast {spell.Name}.", LogMessageType.FightLog);
                 }
                 else
                 {
-                    CastSpell(fighter);
-                    return;
+                    if (target == null) return;
+                    SpellInabilityReason reason = _account.Character.Fight.CanLaunchSpellOn(spell.SpellId, Fighter.CellId, target.CellId);
+                    switch (reason)
+                    {
+                        case SpellInabilityReason.ActionPoints:
+                        case SpellInabilityReason.RequiredState:
+                        case SpellInabilityReason.TooManyLaunch:
+                        case SpellInabilityReason.TooManyLaunchOnCell:
+                        case SpellInabilityReason.Unknown:
+                        case SpellInabilityReason.UnknownSpell:
+                            // any of those conditions we can't do anything other then going to the next spell. so, let it return;
+                            break;
+                        case SpellInabilityReason.None:
+                            CastSpell(target, spell);
+                            if (_account.Character.Fight.SpellResetEvent.WaitOne(TimeOut))
+                                Logger.Default.Log($"Successfully launched {spell.Name}", LogMessageType.FightLog);
+                            else
+                                Logger.Default.Log($"Could not cast {spell.Name} at {target.CellId} ", LogMessageType.FightLog);
+                            break;
+                        default:
+                            if (Fighter.MovementPoints > 0 && MoveToHit(target, spell, false) == MovementEnum.Success)
+                                if (MovementAutoReset.WaitOne(TimeOut)) // If movement was a success then we call recursively
+                                    ExecuteSpell(spell, target);
+                            break;
+                    }
                 }
+                if (!FighterDiedAutoReset.WaitOne(Delay)) return; // Wait to see if mob died. If true then we Task.Await
+
+                Task.Delay(Delay / 2).Wait();
+                return;
             }
-            else if (_currentSpell.HandToHand && _account.Character.Fight.IsHandToHand())
-                CastSpell(fighter);
-            else
+            catch (Exception)
             {
-                SpellInabilityReason reason = _account.Character.Fight.CanLaunchSpellOn(_currentSpell.SpellId, Fighter.CellId, fighter.CellId);
-                switch (reason)
-                {
-                    #region Case Plausible
-                    case SpellInabilityReason.MaxRange:
-                    case SpellInabilityReason.MinRange:
-                    case SpellInabilityReason.LineOfSight:
-                    case SpellInabilityReason.NotInDiagonal:
-                    case SpellInabilityReason.NotInLine:
-                        MovementEnum movResults = MoveToHit(fighter);
-                        if (movResults != MovementEnum.Success) // If it was a success then we have to wait for the event. Otherwise, next skill.
-                            if (GetNextSkill())
-                                ExecuteSpell();
-                        return;
-                    #endregion
-                    case SpellInabilityReason.None:
-                        CastSpell(fighter);
-                        break;
-                    default:
-                        if (GetNextSkill())
-                            ExecuteSpell();
-                        break;
-                }
+
             }
+            
         }
         private void CastSpell(IFighter fighter)
         {
@@ -251,53 +302,14 @@ namespace Cookie.Game.Fight
         }
         private void Movement_MovementFinished(object sender, CellMovementEventArgs e)
         {
-            Thread.Sleep(random.Next(1500, 3000));
-            if (e.Sucess)
-            {// if movement succefull then Execute spell
-                ExecuteSpell();
-            }
-            else // if not then get next spell and execute.
+            if (!e.Sucess) return;
+            lock (CheckLock)
             {
-                if (GetNextSkill())
-                    ExecuteSpell();
+                Fighter.MovementPoints = (short)(e.Distance);
+                Logger.Default.Log($"Signalig MovementAutoReset", LogMessageType.Divers);
+                Task.Delay(Delay).Wait();
+                MovementAutoReset.Set();
             }
-            return;
-        }
-        private void OnSpellCasted(object sender, SpellCastEvent e)
-        {
-            System.Threading.Thread.Sleep(random.Next(2000, 4000));
-            _spellEvent.SpellCasted -= OnSpellCasted;
-            if (e.SpellId == 0)
-                Console.WriteLine($"Suceffuly casted {e.SpellId}");
-            if (e.Sucess)
-            {
-                _currentSpellRelaunch++;
-                if (_currentSpellRelaunch >= _currentSpell.Relaunchs)// checking if can still relaunch
-                {
-                    if(GetNextSkill())
-                        ExecuteSpell();
-                    return;
-                }
-                ExecuteSpell();
-            }
-            else
-            {
-                if (GetNextSkill())
-                    ExecuteSpell();
-            }
-                
-        }
-        private bool GetNextSkill()
-        {
-            if (_iASpells.Count > 0)
-            {
-                _currentSpell = _iASpells.PopAt(0);
-                _currentSpellRelaunch = 0;
-                return true;
-            }
-            else
-                Endturn();
-            return false;
         }
         private void Endturn()
         {
@@ -311,25 +323,22 @@ namespace Cookie.Game.Fight
 
         }
         #region FightSettings
-        private bool IsHidden { get; set; }
-        internal void HideFight(bool UpdateStatus = true)
+        internal void HideFight(bool updateStatus = true)
         {
-            if (UpdateStatus)
+            if (updateStatus)
                 IsHidden = !IsHidden;
             _account.Character.Fight.LockObserver();
         }
-        private bool IsLocked { get; set; }
-        internal void LockFight(bool UpdateStatus = true)
+        internal void LockFight(bool updateStatus = true)
         {
-            if (UpdateStatus)
+            if (updateStatus)
                 IsLocked = !IsLocked;
             _account.Character.Fight.LockFight();
         }
-        private bool PartyOnly { get; set; }
-        internal void LockParty(bool UpdateStatus = true)
+        internal void LockParty(bool updateStatus = true)
         {
-            if(UpdateStatus)
-                PartyOnly = !PartyOnly;
+            if(updateStatus)
+                IsPartyOnly = !IsPartyOnly;
             _account.Character.Fight.LockPartyOnly();
         }
         #endregion

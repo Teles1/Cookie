@@ -6,6 +6,10 @@ namespace Cookie.Game.Map.Elements
 {
     public class UsableElement : IUsableElement
     {
+        public UsableElement()
+        {
+        }
+
         public UsableElement(int cellId, IInteractiveElement element, List<InteractiveElementSkill> skills)
         {
             CellId = cellId;

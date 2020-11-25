@@ -162,14 +162,17 @@ namespace Cookie.Game.Fight
             }
             else if (message.Effect is FightTemporaryBoostEffect ftbe)
             {
-                switch (message.ActionId)
+                lock (CheckLock)
                 {
-                    case 168:
-                        ((Fighter) Fighter).ActionPoints = (short) (Fighter.ActionPoints - ftbe.Delta);
-                        break;
-                    case 169:
-                        ((Fighter) Fighter).MovementPoints = (short) (Fighter.MovementPoints - ftbe.Delta);
-                        break;
+                    switch (message.ActionId)
+                    {
+                        case 168:
+                            ((Fighter)Fighter).ActionPoints = (short)(Fighter.ActionPoints - ftbe.Delta);
+                            break;
+                        case 169:
+                            ((Fighter)Fighter).MovementPoints = (short)(Fighter.MovementPoints - ftbe.Delta);
+                            break;
+                    }
                 }
             }
         }
@@ -403,17 +406,21 @@ namespace Cookie.Game.Fight
         }
         private void HandleGameActionFightDeathMessage(IAccount account, GameActionFightDeathMessage message)
         {
-            if (Fighter.Id == message.TargetId)
+            lock (CheckLock)
             {
-                Logger.Default.Log("Bot mort");
-                Fighters.Remove(Fighters.Find(f => f.Id == message.TargetId));
+                if (Fighter.Id == message.TargetId)
+                {
+                    Logger.Default.Log("Bot mort");
+                    Fighters.Remove(Fighters.Find(f => f.Id == message.TargetId));
+                }
+                if (Monsters.Exists(m => m.Id == message.TargetId))
+                {
+                    Logger.Default.Log($"Monstre[{message.TargetId}] est mort");
+                    Monsters.Remove(Monsters.Find(m => m.Id == message.TargetId));
+                    Logger.Default.Log($"Signalig FighterDiedAutoReset", LogMessageType.Divers);
+                    FighterDiedAutoReset.Set();
+                }
             }
-            if (Monsters.Exists(m => m.Id == message.TargetId))
-            {
-                Logger.Default.Log($"Monstre[{message.TargetId}] est mort");
-                Monsters.Remove(Monsters.Find(m => m.Id == message.TargetId));
-            }
-            //RemoveFighter(message.TargetId);
         }
 
         private void HandleSequenceEndMessage(IAccount account, SequenceEndMessage message)
@@ -662,24 +669,30 @@ namespace Cookie.Game.Fight
         }
         protected void RemoveFighter(double Id)
         {
-            Fighters.Remove(Fighters.Find(f => f.Id == Id));
-            Monsters.Remove(Monsters.Find(m => m.Id == Id));
+            lock (CheckLock)
+            {
+                Fighters.Remove(Fighters.Find(f => f.Id == Id));
+                Monsters.Remove(Monsters.Find(m => m.Id == Id));
+            }
         }
 
         protected void AddFighter(GameFightFighterInformations infos)
         {
-            if (infos is GameFightMonsterInformations monsterInfo)
-                Monsters.Add(new Monster(monsterInfo.ContextualId, monsterInfo.Disposition.CellId, monsterInfo.Stats,
-                    (uint)monsterInfo.TeamId, monsterInfo.Alive, monsterInfo.CreatureGenericId, (byte)monsterInfo.CreatureGrade));
-            //else if (infos is GameFightCompanion companionInfo)
-            //    Companions.Add(new Companion(companionInfo.ContextualId, companionInfo.Disposition.CellId,
-            //        companionInfo.Stats, companionInfo.TeamId, companionInfo.Alive, companionInfo.CompanionGenericId,
-            //        companionInfo.Level, companionInfo.MasterId));
-            else if( infos is GameFightCharacterInformations)
-                Fighters.Add(new Fighter(infos.ContextualId, infos.Disposition.CellId, infos.Stats, (uint)infos.TeamId,
-                    infos.Alive));
-            else
-                throw new Exception($"Typeof({infos.TypeID}) [{infos.GetType()}] type is missing on AddFighter()");
+            lock (CheckLock)
+            {
+                if (infos is GameFightMonsterInformations monsterInfo)
+                    Monsters.Add(new Monster(monsterInfo.ContextualId, monsterInfo.Disposition.CellId, monsterInfo.Stats,
+                        (uint)monsterInfo.TeamId, monsterInfo.Alive, monsterInfo.CreatureGenericId, (byte)monsterInfo.CreatureGrade));
+                //else if (infos is GameFightCompanion companionInfo)
+                //    Companions.Add(new Companion(companionInfo.ContextualId, companionInfo.Disposition.CellId,
+                //        companionInfo.Stats, companionInfo.TeamId, companionInfo.Alive, companionInfo.CompanionGenericId,
+                //        companionInfo.Level, companionInfo.MasterId));
+                else if (infos is GameFightCharacterInformations)
+                    Fighters.Add(new Fighter(infos.ContextualId, infos.Disposition.CellId, infos.Stats, (uint)infos.TeamId,
+                        infos.Alive));
+                else
+                    throw new Exception($"Typeof({infos.TypeID}) [{infos.GetType()}] type is missing on AddFighter()");
+            }
         }
 
         protected int DistanceFrom(IFighter fighter)
@@ -694,21 +707,24 @@ namespace Cookie.Game.Fight
 
         protected IFighter GetFighter(double fighterId)
         {
-            //Logger.Default.Log($"Looking for id [{fighterId}]");
+            lock (CheckLock) 
+            { 
+                //Logger.Default.Log($"Looking for id [{fighterId}]");
              
-            //foreach (var monster in Account.Character.Map.Monsters)
-            //    Logger.Default.Log($"[Monster]{monster.GroupName} has id {monster.Id} and level [{monster.GroupLevel}]");
-            //foreach (var fighter in Fighters)
-            //    Logger.Default.Log($"[Fighter]Fighter on {fighter.CellId} has id {fighter.Id}");
-            //foreach (var companion in Companions)
-            //    Logger.Default.Log($"[Companion]{companion.Name} has id {companion.Id}");
-
-            if (Monsters.Find(x => x.Id == fighterId) != null)
-                return Monsters.FirstOrDefault(m => m.Id == fighterId);
-            //else if (Companions.Find(x => x.Id == fighterId) != null)
-            //    return Companions.FirstOrDefault(c => c.Id == fighterId);
-            else
-                return Fighters.FirstOrDefault(f => f.Id == fighterId);
+                //foreach (var monster in Account.Character.Map.Monsters)
+                //    Logger.Default.Log($"[Monster]{monster.GroupName} has id {monster.Id} and level [{monster.GroupLevel}]");
+                //foreach (var fighter in Fighters)
+                //    Logger.Default.Log($"[Fighter]Fighter on {fighter.CellId} has id {fighter.Id}");
+                //foreach (var companion in Companions)
+                //    Logger.Default.Log($"[Companion]{companion.Name} has id {companion.Id}");
+            
+                if (Monsters.Find(x => x.Id == fighterId) != null)
+                    return Monsters.FirstOrDefault(m => m.Id == fighterId);
+                //else if (Companions.Find(x => x.Id == fighterId) != null)
+                //    return Companions.FirstOrDefault(c => c.Id == fighterId);
+                else
+                    return Fighters.FirstOrDefault(f => f.Id == fighterId);
+            }
         }
 
         protected bool IsFreeCell(int cellId)

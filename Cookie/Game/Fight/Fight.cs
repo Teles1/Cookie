@@ -38,14 +38,14 @@ namespace Cookie.Game.Fight
                     cellId = cell;
                     savDistance = distance;
                 }
-                var movementt = Account.Character.Fight.MoveToCell(cellId);
-                movementt.MovementFinished += (sender, e) =>
+                var movement = Account.Character.Fight.MoveToCell(cellId);
+                movement.MovementFinished += (sender, e) =>
                 {
                     Logger.Default.Log("Fin du tour");
                     Account.Network.SendToServer(new GameFightTurnFinishMessage());
                     IsFighterTurn = false;
                 };
-                movementt.PerformMovement();
+                movement.PerformMovement();
             }
             else
             {

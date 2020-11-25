@@ -84,7 +84,7 @@ namespace Cookie.API.Game.Map
         /// <param name="id">Identifiant de l'élément interactif à récolter</param>
         /// <param name="maxDistance">Distance maximum à laquelle se placer de l'élement</param>
         /// <returns>True si le personnage se déplace, sinon false</returns>
-        ICellMovement MoveToElement(int id, int maxDistance);
+        ICellMovement MoveToElement(uint id, int maxDistance);
 
         /// <summary>Se déplace sur un element</summary>
         /// <param name="id">Identifiant de l'élément</param>
@@ -95,6 +95,10 @@ namespace Cookie.API.Game.Map
         /// <param name="cellId">Identificateur de la cellule</param>
         /// <returns>True si il n'y a aucune entité, sinon false</returns>
         bool NoEntitiesOnCell(int cellId);
+        /// <summary>Indique si aucune player ne se trouve sur la cellule</summary>
+        /// <param name="cellId">Identificateur de la cellule</param>
+        /// <returns>True si il n'y a aucune entité, sinon false</returns>
+        bool NoPlayerOnCell(int cellId);
 
         /// <summary>Indique si la cellule est marchable et si aucune entité ne s'y trouve</summary>
         /// <param name="cellId">Identificateur de la cellule</param>

@@ -1,7 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net.Http.Headers;
+using System.Threading;
+using System.Threading.Tasks;
 using Cookie.API.Core;
 using Cookie.API.Datacenter;
 using Cookie.API.Game.Jobs;
@@ -14,142 +15,130 @@ using Cookie.API.Gamedata.D2o;
 using Cookie.API.Messages;
 using Cookie.API.Protocol.Network.Messages;
 using Cookie.API.Utils;
-using Cookie.Game.Map;
+using Cookie.Game.Map.Elements;
 
 namespace Cookie.Game.Jobs
 {
     public class GatherManager : IGatherManager
     {
         private readonly IAccount _account;
+        private int Delay => 10000;
         #region Constructors
         public GatherManager(IAccount account)
         {
             _account = account;
-            _account.Network.RegisterPacket<JobExperienceMultiUpdateMessage>(HandleJobExperienceMultiUpdateMessage,
-                MessagePriority.VeryHigh);
+            _account.Network.RegisterPacket<JobExperienceMultiUpdateMessage>(HandleJobExperienceMultiUpdateMessage, MessagePriority.VeryHigh);
             _account.Network.RegisterPacket<JobLevelUpMessage>(HandleJobLevelUpMessage, MessagePriority.VeryHigh);
-            _account.Network.RegisterPacket<JobExperienceUpdateMessage>(HandleJobExperienceUpdateMessage,
-                MessagePriority.VeryHigh);
-
-            //_account.Network.RegisterPacket<MapComplementaryInformationsDataMessage>(HandleMapComplementaryInformationsDataMessage, MessagePriority.Normal);
-            //_account.Network.RegisterPacket<GameMapMovementCancelMessage>(HandleGameMapMovementCancelMessage, MessagePriority.Normal);
-            //_account.Network.RegisterPacket<GameMapMovementConfirmMessage>(HandleGameMapMovementConfirmMessage, MessagePriority.Normal);
-            //_account.Network.RegisterPacket<InteractiveElementUpdatedMessage>(HandleInteractiveElementUpdatedMessage, MessagePriority.Normal);
-            //_account.Network.RegisterPacket<InteractiveMapUpdateMessage>(HandleInteractiveMapUpdateMessage, MessagePriority.Normal);
-            Moved = false;
+            _account.Network.RegisterPacket<JobExperienceUpdateMessage>(HandleJobExperienceUpdateMessage,MessagePriority.VeryHigh);
+            _account.Network.RegisterPacket<ObtainedItemWithBonusMessage>(HandleObtainedItemWithBonusMessage, MessagePriority.VeryHigh);
+            MovementAutoReset = new AutoResetEvent(false);
+            InteractiveUsedAutoReset = new AutoResetEvent(false);
+            CheckLock = new object();
         }
+
         #endregion
         #region Variables
-        private ICellMovement Move { get; set; }
-        private int SkillInstanceUid { get; set; } = -1;
-        public int Id { get; set; } = -1;
-        public bool IsFishing { get; set; }
-        public bool Moved { get; set; }
+        AutoResetEvent MovementAutoReset { get; }
+        AutoResetEvent InteractiveUsedAutoReset { get; }
         public bool Launched { get; set; }
         public List<int> ToGather { get; set; }
         public bool AutoGather { get; set; }
+        public object CheckLock { get; set; }
         #endregion
-        public void Launch()
-        {
-            if (!Launched)
-                Launched = true;
-        }
-
         public void Stop()
         {
             if (Launched)
                 Launched = false;
         }
-
         public void DoAutoGather(bool arg)
         {
             AutoGather = !arg;
         }
-
+        /// <summary>
+        ///     Starts the Gather routine
+        /// </summary>
+        /// <param name="params">RessourceList</param>
+        /// <param name="autoGather">true if autogathering</param>
         public void Gather(List<int> @params, bool autoGather)
-        {
-            if (@params.Count < 1) return;
-            Launched = true;
-            AutoGather = autoGather;
-            ToGather = @params;
-            if (Moved && Id != -1 && (GetRessourceDistance(Id) == 1))
+        {/* This function will be responsible for moving close to the element and harvesting if possible.
+            Loop thru the items to harvest to check weather that ressource id is present on the items and if it's harvestable.*/
+            //Starting getting which element is closer to our bot
+            IUsableElement element = GetClosestHarvestable(@params);
+            if (element != null)
             {
-                Logger.Default.Log($"Moved[{Moved}] => Farming[{Id}]");
-                _account.Character.Map.UseElement(Id, SkillInstanceUid);
-                Id = -1;
-                Moved = false;
-                IsFishing = false;
-                return;
-            }
-            var listDistance = new List<int>();
-            var listUsableElement = new List<IUsableElement>();
-            try
-            {
-                foreach (var ressourceId in ToGather)
+                Logger.Default.Log($"Element Found. Moving to [{element.CellId}]", API.Utils.Enums.LogMessageType.Arena);
+                uint id = element.Element.Id;
+                var skillInstanceUid = element.Skills[0].SkillInstanceUid;
+                ICellMovement move = _account.Character.Map.MoveToElement(id, 1);
+                if (move == null) move = _account.Character.Map.MoveToElement(id, 2);
+                move.MovementFinished += (movement, message) =>
                 {
-                    foreach (var usableElement in _account.Character.Map.UsableElements)
+                    Logger.Default.Log($"Movement perfomed. Status[{message.Sucess}]", API.Utils.Enums.LogMessageType.Arena);
+                    if (message.Sucess)
+                        MovementAutoReset.Set();
+                };
+                move.PerformMovement();
+                if (MovementAutoReset.WaitOne(Delay)) //Wait for the movement delay.
+                {
+                    Logger.Default.Log($"Farming the ressource.", API.Utils.Enums.LogMessageType.Arena);
+                    _account.Character.Map.UseElement((int)id, skillInstanceUid); //server will reply with InteractiveUsedMessage then once done InteractiveElementUpdatedMessage
+                    if (InteractiveUsedAutoReset.WaitOne(Delay)) // if this returns true we execute Gather. else return;
+                        if (_account.Character.PathManager.Launched)
+                            _account.Character.PathManager.GatherManagerDoActionByPass();
+                }
+            }
+        }
+        private IUsableElement GetClosestHarvestable(List<int> ressourceIdList)
+        {
+            int distance = 9999;
+            int tmpDistance = -1;
+            IUsableElement element = new UsableElement();
+            lock (CheckLock)
+            {
+                if (_account.Character.Map.UsableElements.Count > 0)
+                {
+                    foreach (var ressourceId in ressourceIdList)
                     {
-                        foreach (var interactiveElement in _account.Character.Map.InteractiveElements.Values)
+                        foreach (var usableElement in _account.Character.Map.UsableElements)
                         {
-                            if (usableElement.Value.Element.Id == interactiveElement.Id && interactiveElement.IsUsable
-                                        && interactiveElement.TypeId == ressourceId/* && _account.Character.Map.NoEntitiesOnCell(usableElement.Value.CellId)*/)
+                            foreach (var interactiveElement in _account.Character.Map.InteractiveElements.Values)
                             {
-                                listUsableElement.Add(usableElement.Value);
-                                listDistance.Add(GetRessourceDistance((int)usableElement.Value.Element.Id));
-
+                                if (usableElement.Value.Element.Id == interactiveElement.Id && interactiveElement.IsUsable && interactiveElement.TypeId == ressourceId)
+                                {
+                                    tmpDistance = GetRessourceDistance(usableElement.Value.Element.Id);
+                                    if (distance > tmpDistance)
+                                    {
+                                        distance = tmpDistance;
+                                        element = usableElement.Value;
+                                    }
+                                }
                             }
                         }
                     }
                 }
-                if (listDistance.Count <= 0) return;
-                foreach (var usableElement in TrierDistanceElement(listDistance, listUsableElement))
-                {
-                    Id = (int) usableElement.Element.Id;
-                    SkillInstanceUid = usableElement.Skills[0].SkillInstanceUid;
-                    Move = _account.Character.Map.MoveToElement(Id, 1);
-                    Console.WriteLine($"Moving closer to element[{Id}]");
-                    // after confirming that we actually moved closer to the element we launch Gather() once again to collect the ressource
-                    Move.MovementFinished += Move_MovementFinished;
-                    Move.PerformMovement();
-                    break;
-                }
-                Launched = false;
             }
-            catch (Exception e)
-            {
-                Console.WriteLine(e.Message);
-            }
+            
+            if (distance == 9999)
+                return null;
+            return element;
         }
-
-        private void Move_MovementFinished(object sender, CellMovementEventArgs e)
-        {
-            Move.MovementFinished -= Move_MovementFinished;
-            if (e.Sucess)
-            {
-                Moved = true;
-                Gather();
-            }
-            /*else if(_account.Character.PathManager.Launched)
-                _account.Character.PathManager.DoAction();*/
-        }
-
         public bool CanGatherOnMap(List<int> ids)
         {
-            try
+            lock (CheckLock)
             {
-                return ids.Count >= 1 && (from ressourceId in ids
-                           from usableElement in _account.Character.Map.UsableElements
-                           from interactiveElement in _account.Character.Map.InteractiveElements.Values
-                           where usableElement.Value.Element.Id == interactiveElement.Id && interactiveElement.IsUsable
-                           where interactiveElement.TypeId == ressourceId &&
-                                 _account.Character.Map.NoEntitiesOnCell(usableElement.Value.CellId)
-                           select ressourceId).Any();
+                foreach (int rId in ids)
+                {
+                    foreach (var uElement in _account.Character.Map.UsableElements)
+                    {
+                        foreach (var iElement in _account.Character.Map.InteractiveElements.Values)
+                        {
+                            if (uElement.Value.Element.Id == iElement.Id && iElement.IsUsable && iElement.TypeId == rId)
+                                return true;
+                        }
+                    }
+                }
             }
-            catch (Exception e)
-            {
-                Console.WriteLine(e.Message);
-                return false;
-            }
+            return false;
         }
         public void Gather()
         {
@@ -179,7 +168,7 @@ namespace Cookie.Game.Jobs
 
             return listUsableElement;
         }
-        private int GetRessourceDistance(int id)
+        private int GetRessourceDistance(uint id)
         {
             var characterMapPoint = new MapPoint(_account.Character.CellId);
             var statedRessource = _account.Character.Map.StatedElements.FirstOrDefault(se => se.Value.Id == id).Value;
@@ -187,6 +176,7 @@ namespace Cookie.Game.Jobs
             var ressourceMapPoint = new MapPoint((int) statedRessource.CellId);
             return characterMapPoint.DistanceTo(ressourceMapPoint);
         }
+        #region Handlers
         private void HandleJobExperienceMultiUpdateMessage(IAccount account, JobExperienceMultiUpdateMessage message)
         {
             _account.Character.Jobs = message.ExperiencesUpdate;
@@ -210,46 +200,11 @@ namespace Cookie.Game.Jobs
             Logger.Default.Log(
                 $"{FastD2IReader.Instance.GetText(ObjectDataManager.Instance.Get<Job>(message.ExperiencesUpdate.JobId).NameId)} | Level: {message.ExperiencesUpdate.JobLevel} | Exp: {message.ExperiencesUpdate.JobXP}");
         }
-        private void HandleMapComplementaryInformationsDataMessage(IAccount account,
-            MapComplementaryInformationsDataMessage message)
+        private void HandleObtainedItemWithBonusMessage(IAccount account, ObtainedItemWithBonusMessage message)
         {
-            if (!AutoGather) return;
-            Launched = true;
-            account.PerformAction(Gather, 1000);
+            Task.Delay(250).Wait();
+            InteractiveUsedAutoReset.Set();
         }
-
-        private void HandleGameMapMovementCancelMessage(IAccount account, GameMapMovementCancelMessage message)
-        {
-            if (Id != -1)
-                Id = -1;
-        }
-        private void HandleGameMapMovementConfirmMessage(IAccount account, GameMapMovementConfirmMessage message)
-        {
-            //moviment finished being displayed
-            Moved = true;
-        }
-        /*
-        private void HandleInteractiveElementUpdatedMessage(IAccount account, InteractiveElementUpdatedMessage message)
-        {
-            Console.WriteLine($"InteractiveElementUpdatedMessage");
-            if (account.Character.PathManager.Launched)
-            {
-                account.PerformAction(account.Character.PathManager.DoAction, 1000);
-            }
-            if (!AutoGather || !message.InteractiveElement.OnCurrentMap) return;
-            Launched = true;
-            account.PerformAction(Gather, 1000);
-        }
-        */
-        /*
-        private void HandleInteractiveMapUpdateMessage(IAccount account, InteractiveMapUpdateMessage message)
-        {
-            //this is being handled inside Character.Map
-            Console.WriteLine($"InteractiveMapUpdateMessage");
-            if (!message.InteractiveElements.Any(element => Launched && element.OnCurrentMap) || !AutoGather) return;
-            Launched = true;
-            account.PerformAction(Gather, 1000);
-        }
-        */
+        #endregion Handlers
     }
 }

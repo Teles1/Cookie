@@ -105,8 +105,7 @@ namespace Cookie.Core.Pathmanager
 
         private readonly Random Randomizer = new Random();
         private Timer Timer { get; set; }
-
-        private IMapChangement mapChangement = null;
+        private Timer CloseTimer { get; set; }
         public PathManager(IAccount account)
         {
             if (!string.IsNullOrEmpty(TrajetsDirectory) && !Directory.Exists(TrajetsDirectory))
@@ -124,28 +123,38 @@ namespace Cookie.Core.Pathmanager
             */
         }
         private List<int> RessourcesToGather { get; set; }
-
-        private Script script;
+        private Script script { get; set; }
         public bool Launched { get; set; }
         public IAccount Account { get; set; }
         private bool Locked { get; set; }
         public async void Start(string trajet)
         {
+            if (Launched) return;
             RessourcesToGather = new List<int>();
+            if(((Character)Account.Character).Ia != default)
+                ((Character)Account.Character).Ia.RemoveEvents();
             await Task.Run(() => ParseTrajet(TrajetsDirectory + trajet + ".lua"));
             Launched = true;
             if(Timer != null)
                 Timer.Enabled = false;
             Timer = new Timer(10000);
+            CloseTimer = new Timer(10800000);
+            CloseTimer.Elapsed += CloseTimer_Elapsed;
             Timer.Elapsed += Timer_Elapsed;
             Timer.AutoReset = false;
-            DoAction();
+            CloseTimer.Start();
+            if (script != null)
+                DoAction();
+        }
+
+        private void CloseTimer_Elapsed(object sender, ElapsedEventArgs e)
+        {
+            Stop();
         }
 
         public void Stop()
         {
             Launched = false;
-            ((Character)Account.Character).Ia.RemoveEvents();
             Locked = false;
         }
         public void DoAction()
@@ -153,10 +162,16 @@ namespace Cookie.Core.Pathmanager
             if (Locked) return;
             if (Timer.Enabled) return;
             if (!Launched) return;
+            Locked = true;
             Logger.Default.Log($"DoAction");
-            mapChangement = null;
             using (MapMovement movMap = ParseMove()) 
             {
+                if (movMap == null)
+                {
+                    Stop();
+                    return;
+
+                }
                 StartTimer();
                 // If Gather on this map and there are resources to be gathered
                 if (movMap.Gather && Account.Character.GatherManager.CanGatherOnMap(RessourcesToGather))
@@ -182,48 +197,16 @@ namespace Cookie.Core.Pathmanager
                     return;
                 else
                 {
-                    mapChangement = Account.Character.Map.ChangeMap(mapDir);
+                    IMapChangement mapChangement = Account.Character.Map.ChangeMap(mapDir);
                     mapChangement.ChangementFinished += MapChangement_ChangementFinished;
                     mapChangement.PerformChangement();
                     Locked = true;
                 }
             }            
         }
-        private void MapChangement_ChangementFinished(object sender, MapChangementFinishedEventArgs e)
-        {
-            if(mapChangement != null)
-            {
-                mapChangement.ChangementFinished -= MapChangement_ChangementFinished;
-                mapChangement = null;
-            }
-            Locked = false;
-            Timer.Enabled = false;
-            if (Launched)
-                Account.PerformAction(DoAction, 250);
-        }
-        private void Fight_FightStarted()
-        {
-            Account.Character.Fight.FightStarted -= Fight_FightStarted;
-            Timer.Enabled = false;
-            Locked = true;
-        }
-        private void Fight_FightEnded(GameFightEndMessage message)
-        {
-            Account.Character.Fight.FightEnded -= Fight_FightEnded;
-            //Account.Network.SendToServer(new MapInformationsRequestMessage(Account.Character.MapId));
-            Account.PerformAction(DoAction, 2000);
-            Locked = false;
-        }
-        private void Timer_Elapsed(object sender, ElapsedEventArgs e)
-        {
-            Timer.Elapsed -= Timer_Elapsed;
-            Timer.Enabled = false;
-            //No action for 10 seconds.
-            if (Launched)
-                DoAction();
-        }
         private void StartTimer()
         {
+            Locked = true;
             if (Timer.Enabled)
                 Timer.Enabled = false;
             Timer = new Timer(10000)
@@ -235,24 +218,25 @@ namespace Cookie.Core.Pathmanager
         }
         private void ParseTrajet(string path)
         {
-            script = new Script();
-
             if (string.IsNullOrEmpty(path) ||
                 !File.Exists(path))
                 return;
 
             RessourcesToGather.Clear();
-
-            script.Globals["log"] = (Action<string>)LogMethod;
-            script.Globals["Breed"] = (Func<int>)CharacterBreed;
-            script.Globals["inv"] = new Inventory(Account, false);
-
             try
             {
+                script = new Script();
+                script.Globals["log"] = (Action<string>)LogMethod;
+                script.Globals["Breed"] = (Func<int>)CharacterBreed;
+                script.Globals["inv"] = new Inventory(Account, false);
                 script.DoFile(path);
-            }catch(Exception e)
+            }catch(ScriptRuntimeException e)
             {
-                Logger.Default.Log($"Exception was thrown at [{path}] => \n {e.Message}");
+                Logger.Default.Log($"ScriptRuntimeException was thrown at [{path}] => \n {e.Message}");
+            }
+            catch (SyntaxErrorException e)
+            {
+                Logger.Default.Log($"SyntaxErrorException was thrown at [{path}] => \n {e.Message}");
             }
             #region WhatToGather
             /* What To Gather */
@@ -434,5 +418,45 @@ namespace Cookie.Core.Pathmanager
         {
             Logger.Default.Log(str, LogMessageType.Trajet);
         }
+        public void GatherManagerDoActionByPass()
+        {
+            Logger.Default.Log($"Resetting DoAction", LogMessageType.Trajet);
+            Locked = false;
+            Timer.Enabled = false;
+            Timer.Stop();
+            DoAction();
+        }
+        #region EventHandlers
+        private void MapChangement_ChangementFinished(object sender, MapChangementFinishedEventArgs e)
+        {
+            Locked = false;
+            Timer.Enabled = false;
+            if (Launched)
+                Account.PerformAction(DoAction, 250);
+        }
+        private void Fight_FightStarted()
+        {
+            Account.Character.Fight.FightStarted -= Fight_FightStarted;
+            Timer.Enabled = false;
+            Locked = true;
+        }
+        private void Fight_FightEnded(GameFightEndMessage message)
+        {
+            Account.Character.Fight.FightEnded -= Fight_FightEnded;
+            //Account.Network.SendToServer(new MapInformationsRequestMessage(Account.Character.MapId));
+            Account.PerformAction(DoAction, 2000);
+            Locked = false;
+        }
+        private void Timer_Elapsed(object sender, ElapsedEventArgs e)
+        {
+            Timer.Elapsed -= Timer_Elapsed;
+            Timer.Enabled = false;
+            Locked = false;
+            //No action for 10 seconds.
+            if (Launched)
+                DoAction();
+        }
+       
+        #endregion
     }
 }

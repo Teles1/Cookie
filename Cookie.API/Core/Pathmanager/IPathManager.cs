@@ -7,5 +7,6 @@
         void Start(string trajet);
         void Stop();
         void DoAction();
+        void GatherManagerDoActionByPass();
     }
 }

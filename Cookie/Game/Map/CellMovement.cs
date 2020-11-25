@@ -68,16 +68,22 @@ namespace Cookie.Game.Map
         {
             if (message.ActorId != _account.Character.Id || message.KeyMovements[0] != _path.CellStart.CellId) return;
             _account.Character.Map.MapMovement -= Map_MapMovement;
-            _account.Character.Status = CharacterStatus.Moving;
-            _account.PerformAction(() =>
-                {
-                    _account.Network.SendToServer(new GameMapMovementConfirmMessage());
-                    OnMovementFinished(true);
-                },
-                (int) MovementVelocity.GetPathVelocity(_path,
-                    _path.Cells.Count >= 4
-                        ? MovementVelocity.MovementTypeEnum.WALKING
-                        : MovementVelocity.MovementTypeEnum.RUNNING));
+            if(EndCell != message.KeyMovements[message.KeyMovements.Count-1])
+            {
+                Console.WriteLine("Server returned endingcell different then requested.");
+            }
+            if (_account.Character.Status != CharacterStatus.Fighting)
+                _account.PerformAction(() =>
+                    {
+                        _account.Network.SendToServer(new GameMapMovementConfirmMessage());
+                        OnMovementFinished(true);
+                    },
+                    (int)MovementVelocity.GetPathVelocity(_path,
+                        _path.Cells.Count >= 4
+                            ? MovementVelocity.MovementTypeEnum.WALKING
+                            : MovementVelocity.MovementTypeEnum.RUNNING));
+            else
+                OnMovementFinished(true);
         }
 
         private void Map_MovementFailed(object sender, EventArgs e)
